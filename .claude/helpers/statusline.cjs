@@ -492,7 +492,7 @@ function getGitInfo() {
     'echo "---SEP---"',
     'git branch --show-current 2>/dev/null',
     'echo "---SEP---"',
-    'git status --porcelain 2>/dev/null',
+    'git --no-optional-locks status --porcelain 2>/dev/null',
     'echo "---SEP---"',
     'git rev-list --left-right --count HEAD...@{upstream} 2>/dev/null || echo "0 0"',
   ].join('; ');
