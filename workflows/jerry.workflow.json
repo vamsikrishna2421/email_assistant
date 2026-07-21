@@ -1,0 +1,1008 @@
+{
+  "id": "JerryMultiAgent1",
+  "name": "Jerry - Multi Agent Assistant System",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        2080,
+        0
+      ],
+      "id": "13ae2e00-ea82-dae2-ed76-712be1fa5378",
+      "name": "When chat message received",
+      "webhookId": "d4ec43e0-81c1-cbd0-d841-62f6fa67762d"
+    },
+    {
+      "parameters": {
+        "promptType": "auto",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "=You are Jerry, a personal assistant that coordinates a team of specialist agents.\n\nRight now it is {{ $now.setZone('America/New_York').toFormat('cccc d LLLL yyyy, HH:mm') }} (America/New_York).\n\nYou have no direct access to email, calendars or meeting recordings. Everything you know about them comes from three specialists, and you reach them by calling these tools:\n\n- Email_Agent — Gmail. Reading, searching, summarising, drafting, replying, sending and deleting mail.\n- Calendar_Agent — Google Calendar. Listing events, checking free/busy availability, creating, updating and deleting events, and inviting attendees.\n- Meeting_Agent — Fireflies.ai. Past meeting recordings: listing recent meetings, fetching transcripts, summarising what was said, pulling out action items.\n\nHow to work:\n\n1. Delegate one clear, self-contained instruction at a time. The specialists cannot see this conversation, so restate every detail they need — full names, email addresses, absolute dates and times, message IDs, event IDs.\n\n2. Resolve relative dates yourself before delegating. Never pass along \"tomorrow\", \"next Tuesday\" or \"this week\". Convert to explicit ISO 8601 timestamps with the America/New_York offset, using the current time above.\n\n3. Chain specialists when a request spans domains. \"Find the email from Priya about the budget and put a 30 minute meeting in my calendar\" is an Email_Agent call, then a Calendar_Agent call that carries the details you learned.\n\n4. Confirm before acting irreversibly. Sending an email, deleting a message, deleting a calendar event, or anything that notifies other people: first state plainly what you are about to do, then wait for the user to agree. Reading and searching never need confirmation.\n\n5. Never invent an ID, an email address, a time or a fact. If a specialist did not give it to you, go and ask for it. If something failed, say so and say why — do not paper over it.\n\n6. Answer the user directly. Report what happened, not which tools you called. Keep it short unless detail was asked for.\n\n7. Your reply is read by a person, not a machine. Never write out a tool call, a JSON object, a raw id, or a phrase like \"Calling Email_Agent with input\". Those are plumbing. If a specialist told you there are 7 unread emails, the entire answer is \"You have 7 unread emails from the last 3 days.\" Nothing before it, nothing after it.",
+          "maxIterations": 12
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2460,
+        0
+      ],
+      "id": "bd32c855-d331-9a48-8a0a-41f21adb117c",
+      "name": "Master Agent"
+    },
+    {
+      "parameters": {
+        "model": "qwen2.5:7b",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        2340,
+        240
+      ],
+      "id": "8218ca7b-3b56-368a-40ec-3d873373d4c8",
+      "name": "Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "jerry-ollama",
+          "name": "Jerry — Ollama"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "sessionIdType": "fromInput",
+        "contextWindowLength": 20
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        2580,
+        240
+      ],
+      "id": "97b043c9-6870-3db6-ed1c-fa0bbc41270b",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Handles everything to do with the user's Gmail: searching and reading mail, summarising it, drafting, replying, sending and deleting. Give it one complete instruction including any addresses, search terms or message IDs it needs.",
+        "text": "={{ $fromAI('Prompt__User_Message_', \"The complete, self-contained instruction for this agent, including every name, address, ID and absolute date it needs\", 'string') }}",
+        "options": {
+          "systemMessage": "=You are the Email Agent, a Gmail specialist working on behalf of the user.\n\nRight now it is {{ $now.setZone('America/New_York').toFormat('cccc d LLLL yyyy, HH:mm') }} (America/New_York).\n\nYour tools map onto Gmail operations:\n- Get_many_messages_in_Gmail — search the mailbox. Returns sender, subject and a short snippet only, not the body. This is your starting point almost every time.\n- Get_a_message_in_Gmail — fetch one message including its full body text. Use this whenever you need to actually read or summarise what a message says; a snippet is not enough.\n- Reply_to_a_message_in_Gmail — reply in thread to a message ID.\n- Create_a_draft_in_Gmail — compose a draft without sending it.\n- Send_a_message_in_Gmail — send a new message immediately.\n- Delete_a_message_in_Gmail — permanently delete a message.\n\nGmail search syntax for the search_query field — combine terms with spaces:\n  is:unread · is:starred · is:important · in:inbox · label:work\n  from:someone@example.com · to:someone@example.com · subject:invoice\n  newer_than:7d · older_than:1m · after:2026/07/01 · before:2026/07/19\n  has:attachment · filename:pdf · larger:5M\nLeave the query empty only when the user genuinely wants the most recent mail regardless of topic.\n\nRules:\n- Never guess a message ID. Search first, read the IDs from the results, then act.\n- One search, then answer. Write the best query you can the first time. Do not run the same search again with a bigger limit or slightly different wording hoping for more — every result you fetch stays in your context for the rest of the task, so repeated searches are what make you slow and expensive, not thorough.\n- You cannot count the mailbox exhaustively; a search returns at most 25 messages. When you are asked how many of something there are, ask for the maximum of 25. Then compare what came back against what you asked for: if you got back fewer than you asked for, that is the true count and you can state it plainly. If you got back exactly as many as you asked for, there are probably more you cannot see — say \"at least N\". Never report a number that just happens to equal your own limit as though you had counted everything.\n- When you are asked to summarise mail, fetch it and summarise what is actually there. Do not speculate about messages you did not retrieve.\n- Write replies and drafts in the user's voice: plain, direct, no filler, no invented commitments. Sign off as the user, never as an AI.\n- Send and Delete are irreversible. Only use them when the instruction you were given clearly and specifically asks for it.\n- Report back concretely: who the message was from, when, what it said, and the message ID so it can be acted on again.",
+          "maxIterations": 6
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [
+        700,
+        480
+      ],
+      "id": "56246549-d025-72f9-0be9-9270703ebbef",
+      "name": "Email Agent"
+    },
+    {
+      "parameters": {
+        "model": "qwen2.5:7b",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        0,
+        760
+      ],
+      "id": "a77d2235-d454-692a-3b70-cf1ecf11e97c",
+      "name": "Chat Model1",
+      "credentials": {
+        "ollamaApi": {
+          "id": "jerry-ollama",
+          "name": "Jerry — Ollama"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('When chat message received').first().json.sessionId }}__email",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        200,
+        760
+      ],
+      "id": "7cfca99b-9f84-f2e5-c9bb-8c8484df6b6e",
+      "name": "Simple Memory1"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": "={{ Math.min($fromAI('limit', \"How many messages to return, up to 25\", 'number', 10), 25) }}",
+        "simple": true,
+        "filters": {
+          "readStatus": "both",
+          "q": "={{ $fromAI('search_query', \"Gmail search query, e.g. \\\"is:unread from:boss@example.com newer_than:7d\\\". Empty string for no filter.\", 'string', \"\") }}"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        400,
+        760
+      ],
+      "id": "da44ce27-0a1b-76e5-e175-cc6fe136b92b",
+      "name": "Get many messages in Gmail",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "jerry-gmail",
+          "name": "Jerry — Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "get",
+        "messageId": "={{ $fromAI('message_id', \"The Gmail message ID, taken from a previous search\", 'string') }}",
+        "simple": false,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        600,
+        760
+      ],
+      "id": "15bec69f-b0fb-f89e-da53-1a44a3ddd251",
+      "name": "Get a message in Gmail",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "jerry-gmail",
+          "name": "Jerry — Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "reply",
+        "messageId": "={{ $fromAI('message_id', \"The Gmail message ID to reply to\", 'string') }}",
+        "emailType": "text",
+        "message": "={{ $fromAI('reply_body', \"The full plain-text body of the reply\", 'string') }}",
+        "options": {
+          "appendAttribution": false,
+          "replyToSenderOnly": "={{ $fromAI('sender_only', \"true to reply only to the sender, false to reply to everyone on the original thread\", 'boolean', true) }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        760
+      ],
+      "id": "19f2b7d4-b881-5db4-63b6-04b99d307cad",
+      "name": "Reply to a message in Gmail",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "jerry-gmail",
+          "name": "Jerry — Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{ $fromAI('subject', \"Subject line of the draft\", 'string') }}",
+        "emailType": "text",
+        "message": "={{ $fromAI('body', \"The full plain-text body of the draft\", 'string') }}",
+        "options": {
+          "sendTo": "={{ $fromAI('to', \"Recipient email address, or several separated by commas\", 'string') }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        760
+      ],
+      "id": "00d3b852-186b-d4d2-cf45-f15c70f38b38",
+      "name": "Create a draft in Gmail",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "jerry-gmail",
+          "name": "Jerry — Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $fromAI('to', \"Recipient email address, or several separated by commas\", 'string') }}",
+        "subject": "={{ $fromAI('subject', \"Subject line\", 'string') }}",
+        "emailType": "text",
+        "message": "={{ $fromAI('body', \"The full plain-text body of the email\", 'string') }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        760
+      ],
+      "id": "bd337430-591c-da17-accc-05f9d737030b",
+      "name": "Send a message in Gmail",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "jerry-gmail",
+          "name": "Jerry — Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "delete",
+        "messageId": "={{ $fromAI('message_id', \"The Gmail message ID to permanently delete\", 'string') }}"
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.2,
+      "position": [
+        1400,
+        760
+      ],
+      "id": "ac505185-9b7c-4f7f-ad67-f49b120ace18",
+      "name": "Delete a message in Gmail",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "jerry-gmail",
+          "name": "Jerry — Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Handles everything to do with the user's Google Calendar: listing events, checking availability, creating, updating and deleting events, and scheduling meetings with attendees. Pass absolute ISO 8601 times, never relative ones.",
+        "text": "={{ $fromAI('Prompt__User_Message_', \"The complete, self-contained instruction for this agent, including every name, address, ID and absolute date it needs\", 'string') }}",
+        "options": {
+          "systemMessage": "=You are the Calendar Agent, a Google Calendar specialist working on behalf of the user.\n\nRight now it is {{ $now.setZone('America/New_York').toFormat('cccc d LLLL yyyy, HH:mm') }} (America/New_York).\nThe user's calendar is \"primary\" and their timezone is America/New_York.\n\nYour tools:\n- Get_many_events_in_Google_Calendar — list events in a time window.\n- Get_availability_in_Google_Calendar — check which slots are free or already booked.\n- Create_an_event_in_Google_Calendar — a solo event: focus time, a reminder, a personal block.\n- Create_an_event_with_attendee_in_Google_Calendar — a meeting with other people. Adds a Google Meet link and emails invitations.\n- Update_an_event_in_Google_Calendar — change an existing event by ID.\n- Delete_an_event_in_Google_Calendar — cancel an event by ID.\n- Date_Time — add or subtract an amount of time from a timestamp. Use it whenever a date needs working out rather than reading off, and pass a negative amount to go backwards.\n\nRules:\n- Every time you pass must be a full ISO 8601 timestamp including the offset, for example 2026-07-21T14:00:00-04:00. Never send a bare date or a relative phrase. Work out the offset for America/New_York on the date in question — it changes with daylight saving.\n- Never guess an event ID. List events over the relevant window first, then use the ID from the results.\n- A relative window always STARTS AT THE CURRENT MOMENT. Never start one at a future date. \"This week\" runs from right now to the end of the coming Sunday; \"today\" runs from now to 23:59 today; \"this month\" from now to the last day of the month. This holds even when today is itself a Sunday — the window still opens now, not tomorrow. Starting a window in the future silently hides whatever is happening today, which is usually the thing that was being asked about.\n- Always say which window you searched, in plain language — \"between Sunday 19 and Sunday 26 July\". This matters most when you found nothing: \"no events this week\" is only useful if they can see what you actually looked at and correct you if the window was wrong.\n- Before you schedule anything, check availability. If the slot is taken, say so and propose the nearest free alternatives rather than double-booking.\n- Default a meeting to 30 minutes and keep it inside 09:00–18:00 on a weekday unless you were told otherwise.\n- Use the with-attendee tool only when there are real attendee email addresses. It sends invitations to other people, so do not use it speculatively.\n- Report back the event title, its start and end in plain language, the attendees, and the event ID.",
+          "maxIterations": 6
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [
+        2660,
+        480
+      ],
+      "id": "920e48c7-2812-043b-a67b-544026054055",
+      "name": "Calendar Agent"
+    },
+    {
+      "parameters": {
+        "model": "qwen2.5:7b",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        1860,
+        760
+      ],
+      "id": "620723a6-f359-692f-2622-f97eedd15967",
+      "name": "Chat Model2",
+      "credentials": {
+        "ollamaApi": {
+          "id": "jerry-ollama",
+          "name": "Jerry — Ollama"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('When chat message received').first().json.sessionId }}__calendar",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        2060,
+        760
+      ],
+      "id": "2525a965-bd4f-f4d5-7220-7cf82af5c799",
+      "name": "Simple Memory2"
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary",
+          "cachedResultName": "primary"
+        },
+        "returnAll": false,
+        "limit": "={{ $fromAI('limit', \"Maximum number of events to return\", 'number', 20) }}",
+        "timeMin": "={{ $fromAI('after', \"Start of the window, full ISO 8601 with offset. For any question about a period containing today (\\\"today\\\", \\\"this week\\\", \\\"this month\\\") this MUST be the current date and time, never the start of a later day. Only use a future date when the question is explicitly about a future period such as \\\"next week\\\".\", 'string') }}",
+        "timeMax": "={{ $fromAI('before', \"End of the window as a full ISO 8601 timestamp with offset\", 'string') }}",
+        "options": {
+          "orderBy": "startTime",
+          "recurringEventHandling": "expand",
+          "timeZone": {
+            "__rl": true,
+            "mode": "id",
+            "value": "America/New_York"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        2260,
+        760
+      ],
+      "id": "6cf027a4-a945-e3e6-4fcf-0f6d5030caad",
+      "name": "Get many events in Google Calendar",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "jerry-gcal",
+          "name": "Jerry — Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary",
+          "cachedResultName": "primary"
+        },
+        "timeMin": "={{ $fromAI('after', \"Start of the window to check as a full ISO 8601 timestamp with offset\", 'string') }}",
+        "timeMax": "={{ $fromAI('before', \"End of the window to check as a full ISO 8601 timestamp with offset\", 'string') }}",
+        "options": {
+          "outputFormat": "availability",
+          "timezone": {
+            "__rl": true,
+            "mode": "id",
+            "value": "America/New_York"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        2460,
+        760
+      ],
+      "id": "11db808c-d469-4a52-f743-34faa6c924f7",
+      "name": "Get availability in Google Calendar",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "jerry-gcal",
+          "name": "Jerry — Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary",
+          "cachedResultName": "primary"
+        },
+        "start": "={{ $fromAI('start', \"Event start as a full ISO 8601 timestamp with offset\", 'string') }}",
+        "end": "={{ $fromAI('end', \"Event end as a full ISO 8601 timestamp with offset\", 'string') }}",
+        "useDefaultReminders": true,
+        "additionalFields": {
+          "summary": "={{ $fromAI('title', \"Title of the event\", 'string') }}",
+          "description": "={{ $fromAI('description', \"Longer description, or an empty string\", 'string', \"\") }}",
+          "location": "={{ $fromAI('location', \"Location, or an empty string\", 'string', \"\") }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        2660,
+        760
+      ],
+      "id": "adbc1abd-6713-6690-0de0-5764526ec566",
+      "name": "Create an event in Google Calendar",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "jerry-gcal",
+          "name": "Jerry — Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary",
+          "cachedResultName": "primary"
+        },
+        "start": "={{ $fromAI('start', \"Meeting start as a full ISO 8601 timestamp with offset\", 'string') }}",
+        "end": "={{ $fromAI('end', \"Meeting end as a full ISO 8601 timestamp with offset\", 'string') }}",
+        "useDefaultReminders": true,
+        "additionalFields": {
+          "summary": "={{ $fromAI('title', \"Title of the meeting\", 'string') }}",
+          "description": "={{ $fromAI('description', \"Agenda or description, or an empty string\", 'string', \"\") }}",
+          "attendees": [
+            "={{ $fromAI('attendees', \"Attendee email addresses separated by commas\", 'string') }}"
+          ],
+          "conferenceDataUi": {
+            "conferenceDataValues": {
+              "conferenceSolution": "hangoutsMeet"
+            }
+          },
+          "sendUpdates": "all"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        2860,
+        760
+      ],
+      "id": "67392be0-238f-79ea-e476-05e2da87fd3f",
+      "name": "Create an event with attendee in Google Calendar",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "jerry-gcal",
+          "name": "Jerry — Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "update",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary",
+          "cachedResultName": "primary"
+        },
+        "eventId": "={{ $fromAI('event_id', \"ID of the event to change, taken from a previous listing\", 'string') }}",
+        "useDefaultReminders": true,
+        "updateFields": {
+          "summary": "={{ $fromAI('title', \"New title, or an empty string to leave it alone\", 'string', \"\") }}",
+          "start": "={{ $fromAI('start', \"New start as ISO 8601 with offset, or an empty string\", 'string', \"\") }}",
+          "end": "={{ $fromAI('end', \"New end as ISO 8601 with offset, or an empty string\", 'string', \"\") }}",
+          "description": "={{ $fromAI('description', \"New description, or an empty string\", 'string', \"\") }}",
+          "location": "={{ $fromAI('location', \"New location, or an empty string\", 'string', \"\") }}",
+          "sendUpdates": "all"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        3060,
+        760
+      ],
+      "id": "b5ed233a-5270-e86b-9df4-a0c84a00b7d5",
+      "name": "Update an event in Google Calendar",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "jerry-gcal",
+          "name": "Jerry — Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "mode": "list",
+          "value": "primary",
+          "cachedResultName": "primary"
+        },
+        "eventId": "={{ $fromAI('event_id', \"ID of the event to delete, taken from a previous listing\", 'string') }}",
+        "options": {
+          "sendUpdates": "all"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [
+        3260,
+        760
+      ],
+      "id": "6ab1b43f-62d8-33b7-4362-79b4f4e55ea8",
+      "name": "Delete an event in Google Calendar",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "jerry-gcal",
+          "name": "Jerry — Google Calendar"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addToDate",
+        "magnitude": "={{ $fromAI('date', \"The starting date as a full ISO 8601 timestamp\", 'string') }}",
+        "timeUnit": "={{ $fromAI('unit', \"Unit to add: one of 'years', 'quarters', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds'\", 'string', \"days\") }}",
+        "duration": "={{ $fromAI('amount', \"How many units to add. Use a negative number to go backwards in time.\", 'number', 1) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dateTimeTool",
+      "typeVersion": 2,
+      "position": [
+        3460,
+        760
+      ],
+      "id": "cbdf0135-91ab-6e6c-88ca-3e2c8bcb3232",
+      "name": "Date & Time"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Retrieves past meeting recordings and transcripts from Fireflies.ai: which meetings happened and when, who was there, what was said, and what the action items were. Use it for anything about a meeting that already took place.",
+        "text": "={{ $fromAI('Prompt__User_Message_', \"The complete, self-contained instruction for this agent, including every name, address, ID and absolute date it needs\", 'string') }}",
+        "options": {
+          "systemMessage": "=You are the Meeting Agent. You retrieve and interpret past meeting recordings from Fireflies.ai.\n\nRight now it is {{ $now.setZone('America/New_York').toFormat('cccc d LLLL yyyy, HH:mm') }} (America/New_York).\n\nYour tools:\n- List_of_Transcripts — the most recent meetings, newest first, with each meeting's id, title, date, duration, participants and a short summary. Always start here.\n- Transcript — one meeting in full by its id: the complete summary and the spoken transcript.\n\nRules:\n- A transcript id only ever comes from List_of_Transcripts. Never invent or guess one.\n- To answer \"what was said about X\", list the recent meetings, pick the ones whose title, date or participants fit, then fetch those transcripts and read them.\n- Fireflies returns dates in UTC. Convert them to America/New_York when you talk about them.\n- Transcripts are long and may be truncated before you see them. If the part you need is missing, say so plainly instead of filling the gap with a guess.\n- Quote people accurately. When you attribute something, name the speaker and, where it matters, roughly when in the meeting they said it.\n- Distinguish clearly between Fireflies' own generated summary and what was literally said in the transcript.\n- If the API reports that a field needs a paid Fireflies plan, report that rather than treating it as empty.",
+          "maxIterations": 6
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agentTool",
+      "typeVersion": 3,
+      "position": [
+        4220,
+        480
+      ],
+      "id": "d59a77d7-139e-9ede-a689-527de139df64",
+      "name": "Meeting Agent"
+    },
+    {
+      "parameters": {
+        "model": "qwen2.5:7b",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        3920,
+        760
+      ],
+      "id": "17de50a1-7645-b19c-bc7d-cd56647345cb",
+      "name": "Chat Model3",
+      "credentials": {
+        "ollamaApi": {
+          "id": "jerry-ollama",
+          "name": "Jerry — Ollama"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('When chat message received').first().json.sessionId }}__meeting",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        4120,
+        760
+      ],
+      "id": "c833d059-dc74-89bc-f729-d34dccee804d",
+      "name": "Simple Memory3"
+    },
+    {
+      "parameters": {
+        "toolDescription": "List the most recent Fireflies meeting recordings, newest first. Returns each meeting's id, title, date, duration, participants and a short summary. Use this to find the id of a meeting before fetching its transcript.",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"query ListTranscripts($limit: Int, $skip: Int) { transcripts(limit: $limit, skip: $skip) { id title dateString duration organizer_email participants meeting_link transcript_url summary { gist short_summary keywords action_items } } }\", variables: { limit: $fromAI('limit', \"How many recent meetings to list, maximum 50\", 'number', 10), skip: 0 } }) }}",
+        "options": {},
+        "optimizeResponse": true,
+        "responseType": "json",
+        "dataField": "data"
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        4320,
+        760
+      ],
+      "id": "c03c317e-47be-a72f-d5ba-a1b322297e33",
+      "name": "List of Transcripts",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "jerry-fireflies",
+          "name": "Jerry — Fireflies"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "toolDescription": "Fetch one Fireflies meeting in full by its id: the complete summary, action items, topics, and the spoken transcript with speaker names and timestamps. The id must come from the List of Transcripts tool.",
+        "method": "POST",
+        "url": "https://api.fireflies.ai/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"query GetTranscript($transcriptId: String!) { transcript(id: $transcriptId) { id title dateString duration organizer_email participants meeting_link transcript_url summary { overview gist short_summary keywords action_items outline bullet_gist topics_discussed } sentences { index speaker_name text start_time end_time } } }\", variables: { transcriptId: $fromAI('transcript_id', \"The Fireflies transcript id, obtained from the List of Transcripts tool\", 'string') } }) }}",
+        "options": {},
+        "optimizeResponse": true,
+        "responseType": "json",
+        "dataField": "data"
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.4,
+      "position": [
+        4520,
+        760
+      ],
+      "id": "bfc2d2f6-6f41-5ba1-2310-1ac7836fd444",
+      "name": "Transcript",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "jerry-fireflies",
+          "name": "Jerry — Fireflies"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Master Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Master Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Master Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "Master Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Email Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "Email Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many messages in Gmail": {
+      "ai_tool": [
+        [
+          {
+            "node": "Email Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a message in Gmail": {
+      "ai_tool": [
+        [
+          {
+            "node": "Email Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to a message in Gmail": {
+      "ai_tool": [
+        [
+          {
+            "node": "Email Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a draft in Gmail": {
+      "ai_tool": [
+        [
+          {
+            "node": "Email Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message in Gmail": {
+      "ai_tool": [
+        [
+          {
+            "node": "Email Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete a message in Gmail": {
+      "ai_tool": [
+        [
+          {
+            "node": "Email Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calendar Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "Master Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Calendar Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory2": {
+      "ai_memory": [
+        [
+          {
+            "node": "Calendar Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many events in Google Calendar": {
+      "ai_tool": [
+        [
+          {
+            "node": "Calendar Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get availability in Google Calendar": {
+      "ai_tool": [
+        [
+          {
+            "node": "Calendar Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an event in Google Calendar": {
+      "ai_tool": [
+        [
+          {
+            "node": "Calendar Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an event with attendee in Google Calendar": {
+      "ai_tool": [
+        [
+          {
+            "node": "Calendar Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update an event in Google Calendar": {
+      "ai_tool": [
+        [
+          {
+            "node": "Calendar Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete an event in Google Calendar": {
+      "ai_tool": [
+        [
+          {
+            "node": "Calendar Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Date & Time": {
+      "ai_tool": [
+        [
+          {
+            "node": "Calendar Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meeting Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "Master Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Meeting Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory3": {
+      "ai_memory": [
+        [
+          {
+            "node": "Meeting Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List of Transcripts": {
+      "ai_tool": [
+        [
+          {
+            "node": "Meeting Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcript": {
+      "ai_tool": [
+        [
+          {
+            "node": "Meeting Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "jerry-local"
+  },
+  "tags": [],
+  "versionId": "1fb948e4-c707-8823-7790-1fdf70466294"
+}

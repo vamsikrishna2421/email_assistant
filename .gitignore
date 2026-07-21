@@ -1,0 +1,40 @@
+# --- secrets -----------------------------------------------------------------
+config/.env
+.env
+*.pem
+*.p12
+
+# Hand-labelled reference pass over a real inbox. The descriptions name the
+# senders — banks, brokerages, security alerts — so the real file stays local.
+# Copy config/reference-labels.example.json to start your own.
+config/reference-labels.json
+
+# --- n8n runtime -------------------------------------------------------------
+# Reinstall with `cd runtime && npm install`
+runtime/node_modules/
+runtime/.n8n/
+runtime/.cache/
+runtime/logs/
+runtime/.claude-flow/
+
+# --- python ------------------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- macOS build artifacts ---------------------------------------------------
+# PyInstaller output; rebuild with ./packaging/build-dmg.sh
+packaging/build/
+packaging/dist/
+*.dmg
+
+# --- local agent state -------------------------------------------------------
+.claude-flow/
+.swarm/
+memory/
+
+# --- os ----------------------------------------------------------------------
+.DS_Store
+.claude/settings.local.json

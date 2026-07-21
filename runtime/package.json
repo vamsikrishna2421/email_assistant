@@ -1,0 +1,11 @@
+{
+  "name": "jerry-n8n-runtime",
+  "private": true,
+  "description": "Isolated n8n runtime for the Jerry multi-agent assistant",
+  "engines": {
+    "node": ">=22.22"
+  },
+  "dependencies": {
+    "n8n": "2.30.7"
+  }
+}

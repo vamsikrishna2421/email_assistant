@@ -1,0 +1,276 @@
+{
+  "id": "JerryEmailDigest",
+  "name": "Jerry - Email Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4809b2d6-7f2c-88b9-447a-b283ff0e8495",
+      "name": "Every 6 hours"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 50,
+        "simple": true,
+        "filters": {
+          "readStatus": "both",
+          "receivedAfter": "={{ $now.minus({ hours: 6 }).toISO() }}",
+          "includeSpamTrash": true,
+          "q": "-subject:\"Inbox digest\""
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "efd74890-1b52-270c-06e3-ba9da2c9e439",
+      "name": "Get recent mail",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "jerry-gmail",
+          "name": "Jerry — Gmail"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Body of the \"Format for the model\" Code node.\n//\n// Emits ONE ITEM PER BATCH, not one item for the whole inbox. n8n runs the LLM\n// chain once per input item, so this turns a single huge classification into\n// several small reliable ones.\n//\n// This is not premature caution. Given 34 emails in one 12.5k-character prompt,\n// the model stopped emitting \"<n>. CATEGORY\" lines altogether and returned prose\n// under markdown headings — 33 of 34 emails came back unclassified. The same\n// model handles a dozen emails without trouble. Volume was the variable.\n//\n// Each batch carries its own `offset` so the assembler can map a batch-local\n// line number back to the right email.\n\nconst BATCH_SIZE = 12;\n\nconst items = $input.all().filter((i) => i.json && i.json.id);\n\nif (items.length === 0) {\n  return [{ json: { empty: true, count: 0, offset: 0, emails: '', rows: [] } }];\n}\n\n// Where Gmail filed each message. Passed to the model as a HINT, never a\n// verdict — the reason this digest reads Spam and Promotions at all is that\n// Gmail's filing is wrong often enough to matter.\nconst labelsOf = (m) => (m.labels ?? m.labelIds ?? [])\n  .map((l) => (typeof l === 'string' ? l : (l.name ?? l.id ?? '')));\n\nconst filedAs = (labels) => {\n  if (labels.includes('SPAM')) return 'Gmail put this in SPAM';\n  if (labels.includes('TRASH')) return 'Gmail put this in TRASH';\n  if (labels.includes('CATEGORY_PROMOTIONS')) return 'Gmail tab: Promotions';\n  if (labels.includes('CATEGORY_SOCIAL')) return 'Gmail tab: Social';\n  if (labels.includes('CATEGORY_UPDATES')) return 'Gmail tab: Updates';\n  if (labels.includes('CATEGORY_FORUMS')) return 'Gmail tab: Forums';\n  return 'Gmail tab: Primary';\n};\n\nconst buriedIn = (labels) =>\n  labels.includes('SPAM') ? 'Spam'\n    : labels.includes('TRASH') ? 'Trash'\n    : labels.includes('CATEGORY_PROMOTIONS') ? 'Promotions'\n    : labels.includes('CATEGORY_SOCIAL') ? 'Social'\n    : '';\n\nconst prepared = items.map((item) => {\n  const m = item.json;\n  const labels = labelsOf(m);\n  return {\n    from: String(m.From ?? m.from ?? 'unknown sender').replace(/\\s*<.*/, '').replace(/\"/g, '').trim(),\n    subject: String(m.Subject ?? m.subject ?? '(no subject)').trim(),\n    // Gmail's own preview. Capped so one newsletter cannot dominate the batch.\n    preview: String(m.snippet ?? '').replace(/\\s+/g, ' ').slice(0, 260),\n    filedAs: filedAs(labels),\n    buried: buriedIn(labels),\n  };\n});\n\nconst batches = [];\nfor (let start = 0; start < prepared.length; start += BATCH_SIZE) {\n  const slice = prepared.slice(start, start + BATCH_SIZE);\n  batches.push({\n    json: {\n      empty: false,\n      count: prepared.length,\n      offset: start,\n      batch: batches.length + 1,\n      batches: Math.ceil(prepared.length / BATCH_SIZE),\n      rows: slice.map(({ from, subject, buried }) => ({ from, subject, buried })),\n      emails: slice.map((e, n) =>\n        `[${n + 1}] From: ${e.from}\\n    Subject: ${e.subject}\\n    Filed by Gmail as: ${e.filedAs}\\n    Preview: ${e.preview}`,\n      ).join('\\n\\n'),\n    },\n  });\n}\n\nreturn batches;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "e6a0f4ce-2bdb-9755-a07f-9d6c74ff6955",
+      "name": "Format for the model"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-mail",
+              "leftValue": "={{ $json.empty }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "9463427a-91e1-cd2f-173b-e5d05a5e50ea",
+      "name": "Anything to report?"
+    },
+    {
+      "parameters": {
+        "model": "qwen2.5:7b",
+        "options": {
+          "temperature": 0,
+          "think": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        880,
+        220
+      ],
+      "id": "a1ee30b4-253f-8ff5-14c5-ca83b470ce81",
+      "name": "Summariser",
+      "credentials": {
+        "ollamaApi": {
+          "id": "jerry-ollama",
+          "name": "Jerry — Ollama"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Context about the person whose inbox this is. This overrides your general\ninstincts about what looks important:\n\n- I am NOT looking for a job. I am not job hunting, not open to offers, and not interested in roles, contracts or recruiter outreach. Any email about a job opening, a role, a vacancy, a contract position, or from a recruiter or job board is the LOWEST possible priority to me, no matter how urgent or personally addressed it looks.\n- I book cinema tickets through Regal as a side business, so Regal booking confirmations are important to me. Regal marketing and promotions are not.\n- I care about anything touching my own money or accounts: payments, transfers, statements, credit score changes, and security or sign-in alerts.\n\nClassify every email below. These arrived in the last 6 hours.\n\nFor EACH email output exactly one line, in the same order, in this format:\n\n<number>. <CATEGORY>\n\nNothing else on the line. Not the sender, not the subject, not an explanation —\nI already have those. Only the number and the category.\n\nCATEGORY must be exactly one of:\n  ACTION  - the user has to do something: a reply is expected, a payment or account needs attention, a deadline or appointment applies to them.\n  FYI     - worth knowing but nothing to do: a confirmation, receipt, ticket, statement, delivery notice, alert about their own account.\n  NOISE   - marketing, promotions, newsletters, social or recommendation notifications.\n\nRules:\n- Every email gets exactly one line. Do not skip any. Do not merge them.\n- Do not count anything and do not write a summary line.\n- A receipt, ticket or confirmation is FYI, never NOISE — the user paid for it.\n- An alert about the user's own money, credit or account is FYI at minimum.\n- \"Filed by Gmail as\" is a hint about where it landed, NOT the answer. Gmail routinely files real invoices, account alerts and personal mail under Promotions or Spam. Judge the content. A payment failure in Spam is still a payment failure.\n- Equally, something in Primary can still be NOISE.\n- Invent nothing. Use only what is in the subject and preview.\n- Output only those lines. No preamble, no headings, no commentary.\n\nEMAILS:\n{{ $json.emails }}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        880,
+        0
+      ],
+      "id": "9e055ae5-ac8d-71aa-63e9-8716deae61ab",
+      "name": "Write the digest"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Body of the \"Assemble the digest\" Code node.\n//\n// Kept as a real .js file rather than a string inside build-digest.mjs: this is\n// ~150 lines of logic with regexes and HTML, and escaping all of it into a\n// template literal is how subtle bugs get in.\n//\n// The division of labour matters. The model returns ONE category per email and\n// nothing else. Everything it is bad at happens here:\n//   - which sender goes with which row (joined by index, so drift is impossible)\n//   - counting (it reported 6/5/3 for a list of 5/3/6)\n//   - topic grouping (deterministic patterns beat a 7B's judgement)\n//   - never letting a receipt or a personal-priority item be filed as marketing\n\n// One model output per batch, paired with that batch's rows. Line numbers are\n// batch-local, so each is shifted by the batch's offset to get a global index.\nconst outputs = $input.all();\nconst batches = $('Format for the model').all();\n\nconst CATEGORIES = ['ACTION', 'FYI', 'NOISE'];\nconst byIndex = new Map();\nconst source = [];\n\nfor (const [b, batch] of batches.entries()) {\n  const offset = batch.json.offset ?? 0;\n  const rows = batch.json.rows ?? [];\n  rows.forEach((r, i) => { source[offset + i] = r; });\n\n  const raw = String(outputs[b]?.json?.text ?? '');\n  for (const line of raw.split('\\n')) {\n    // \"<n>. <CATEGORY>\" — tolerate stray bullets, bold markers, trailing text.\n    const m = line.match(/^\\s*[-*]?\\s*(\\d+)\\s*[.)]\\s*\\**\\s*([A-Za-z]+)/);\n    if (!m) continue;\n    const category = m[2].toUpperCase();\n    if (!CATEGORIES.includes(category)) continue;\n    const local = Number(m[1]);\n    if (local < 1 || local > rows.length) continue; // out-of-range = hallucinated\n    byIndex.set(offset + local, category);\n  }\n}\n\n// Anything the user paid for, or that concerns their own money, must never be\n// filed as marketing. Plurals matter: \\bticket\\b misses \"Regal Tickets for ...\".\nconst MONEY = /\\b(tickets?|receipts?|orders?|invoices?|payments?|statements?|refunds?|confirmations?|bookings?|reservations?|deliver(?:y|ies|ed)|shipp(?:ed|ing)|fico|credit score|balances?|transactions?)\\b/i;\nconst PRIORITY = new RegExp(\"regal tickets for\", 'i');\n// Stated preference, enforced in code. Applied LAST so it overrides both the\n// model and the money/receipt guards: a recruiter writing \"urgent contract, W2\"\n// trips several importance heuristics, and the user still does not want it.\nconst DEMOTE = \"hiring|recruit|job alert|vacanc|\\\\brole\\\\b|\\\\broles\\\\b|\\\\bw2\\\\b|c2c|corp to corp|full[- ]time|contract position|opening|resume|candidate|job opportunit|\\\\b(?:data|cloud|software|azure|aws|gcp|devops|ml|ai|backend|frontend|full[- ]?stack|senior|junior|lead|principal)\\\\s+(?:engineer|developer|architect|analyst|scientist)\\\\b|\\\\b(?:engineer|developer|architect)\\\\s+(?:with|at|@)\\\\b|indeed|monster|lensa|dice|ziprecruiter|glassdoor\" ? new RegExp(\"hiring|recruit|job alert|vacanc|\\\\brole\\\\b|\\\\broles\\\\b|\\\\bw2\\\\b|c2c|corp to corp|full[- ]time|contract position|opening|resume|candidate|job opportunit|\\\\b(?:data|cloud|software|azure|aws|gcp|devops|ml|ai|backend|frontend|full[- ]?stack|senior|junior|lead|principal)\\\\s+(?:engineer|developer|architect|analyst|scientist)\\\\b|\\\\b(?:engineer|developer|architect)\\\\s+(?:with|at|@)\\\\b|indeed|monster|lensa|dice|ziprecruiter|glassdoor\", 'i') : null;\n\n// Topic grouping is deterministic. Asking the model for a second field alongside\n// the category made it drop the output format entirely on a real inbox, and\n// sender/subject patterns classify this mail more reliably anyway.\nconst TOPICS = [\n  { key: 'Tickets & bookings', test: (t) => /regal|ticket|booking|showtime|cinema/i.test(t) },\n  { key: 'Money & accounts', test: (t) => /bank|payment|invoice|statement|fico|credit|zelle|robinhood|sofi|experian|transfer|refund|balance|card/i.test(t) },\n  // Job titles, not just words like \"hiring\". Most of this inbox's recruiter\n  // mail comes from individuals whose subject is only a role description:\n  // \"GCP Data Engineer - Full-Time (Charlotte, NC)\" contains none of the\n  // obvious recruiting vocabulary and was landing under \"Other\".\n  { key: 'Jobs & recruiters', test: (t) => /hiring|recruit|job alert|roles?\\b|position|\\bw2\\b|c2c|contract|opening|vacancy|resume|candidate|full[- ]time|indeed|monster|lensa|dice|\\b(?:data|cloud|software|azure|aws|gcp|devops|ml|ai|backend|frontend|full[- ]?stack)\\s+(?:engineer|developer|architect|analyst|scientist)\\b|\\b(?:engineer|developer|architect)\\s+(?:with|at|@)\\b/i.test(t) },\n  { key: 'Property & home', test: (t) => /zillow|rental|for rent|mortgage|apartment|realty|listing/i.test(t) },\n  { key: 'Shopping & offers', test: (t) => /sale|% off|deal|discount|offer|coupon|shop|save \\$/i.test(t) },\n  { key: 'Social & networking', test: (t) => /linkedin|connect|invitation|follower|network/i.test(t) },\n];\nconst topicOf = (text) => (TOPICS.find((t) => t.test(text)) ?? { key: 'Other' }).key;\n\nconst rows = source.map((row, i) => {\n  const haystack = row.from + ' ' + row.subject;\n  let category = byIndex.get(i + 1) ?? 'UNCLASSIFIED';\n  if (category === 'NOISE' && MONEY.test(row.subject)) category = 'FYI';\n  if (PRIORITY.test(haystack)) category = 'ACTION';\n  if (DEMOTE && DEMOTE.test(haystack) && !PRIORITY.test(haystack)) category = 'NOISE';\n  return {\n    from: row.from,\n    subject: row.subject,\n    buried: row.buried,\n    category,\n    topic: topicOf(haystack),\n  };\n});\n\nconst pick = (c) => rows.filter((r) => r.category === c);\nconst action = pick('ACTION');\nconst fyi = pick('FYI');\nconst noise = pick('NOISE');\nconst missed = pick('UNCLASSIFIED');\nconst rescued = [...action, ...fyi].filter((r) => r.buried);\n\n// --- rendering -------------------------------------------------------------\n// Inline styles only. Gmail strips <style> blocks, so anything in a stylesheet\n// silently disappears and the mail arrives unformatted.\n\nconst esc = (s) => String(s)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n\nconst STYLE = {\n  ACTION: { accent: '#c0392b', bg: '#fdf3f2', label: 'Needs you', text: '#2c2c2c' },\n  FYI: { accent: '#2b6cb0', bg: '#f2f7fc', label: 'Worth knowing', text: '#2c2c2c' },\n  UNCLASSIFIED: { accent: '#b7791f', bg: '#fdf8ef', label: 'Unsorted', text: '#2c2c2c' },\n  NOISE: { accent: '#b0b0b0', bg: '#fafafa', label: 'Not for you', text: '#8a8a8a' },\n};\n\nconst item = (r, kind) => {\n  const s = STYLE[kind];\n  const badge = r.buried\n    ? `<span style=\"display:inline-block;margin-left:8px;padding:1px 6px;border-radius:3px;background:#8e44ad;color:#fff;font-size:10px;letter-spacing:.04em;\">was in ${esc(r.buried)}</span>`\n    : '';\n  return `<tr><td style=\"padding:7px 12px;border-left:3px solid ${s.accent};background:${s.bg};\">\n    <div style=\"font:600 13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;color:${s.text};\">${esc(r.from)}${badge}</div>\n    <div style=\"font:13px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;color:${s.text};opacity:.85;\">${esc(r.subject)}</div>\n  </td></tr>`;\n};\n\n/** Group a bucket by topic so related mail reads together. */\nconst grouped = (list, kind) => {\n  if (!list.length) return '';\n  const s = STYLE[kind];\n  const byTopic = new Map();\n  for (const r of list) {\n    if (!byTopic.has(r.topic)) byTopic.set(r.topic, []);\n    byTopic.get(r.topic).push(r);\n  }\n  const blocks = [...byTopic.entries()].map(([topic, items]) => `\n    <div style=\"font:600 11px/1 -apple-system,Segoe UI,Roboto,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#7a7a7a;margin:16px 0 6px;\">${esc(topic)} <span style=\"color:#b0b0b0;\">· ${items.length}</span></div>\n    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"border-collapse:separate;border-spacing:0 3px;\">\n      ${items.map((r) => item(r, kind)).join('')}\n    </table>`).join('');\n\n  return `<div style=\"margin:26px 0 0;\">\n    <div style=\"font:700 15px/1.3 -apple-system,Segoe UI,Roboto,sans-serif;color:${s.accent};border-bottom:2px solid ${s.accent};padding-bottom:5px;\">${s.label} <span style=\"font-weight:400;color:#9a9a9a;\">(${list.length})</span></div>\n    ${blocks}\n  </div>`;\n};\n\nconst chip = (n, label, colour) =>\n  `<span style=\"display:inline-block;margin-right:14px;font:13px -apple-system,Segoe UI,Roboto,sans-serif;color:#555;\"><b style=\"color:${colour};font-size:17px;\">${n}</b> ${label}</span>`;\n\nconst html = `<div style=\"max-width:640px;margin:0 auto;padding:22px;background:#ffffff;\">\n  <div style=\"font:700 19px/1.2 -apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;\">Inbox digest</div>\n  <div style=\"font:13px -apple-system,Segoe UI,Roboto,sans-serif;color:#8a8a8a;margin-top:3px;\">${rows.length} emails in the last ${6} hours</div>\n\n  <div style=\"margin:16px 0 4px;padding:11px 13px;background:#f6f6f6;border-radius:5px;\">\n    ${chip(action.length, 'need you', STYLE.ACTION.accent)}\n    ${chip(fyi.length, 'worth knowing', STYLE.FYI.accent)}\n    ${chip(noise.length, 'ignored', '#9a9a9a')}\n    ${missed.length ? chip(missed.length, 'unsorted', STYLE.UNCLASSIFIED.accent) : ''}\n  </div>\n\n  ${rescued.length ? `<div style=\"margin-top:16px;padding:11px 13px;border-left:3px solid #8e44ad;background:#f8f4fb;font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#3a3a3a;\">\n    <b>${rescued.length} ${rescued.length === 1 ? 'message was' : 'messages were'} buried by Gmail</b> in Spam or Promotions but looks worth seeing. Marked below.\n  </div>` : ''}\n\n  ${grouped(action, 'ACTION')}\n  ${grouped(fyi, 'FYI')}\n  ${grouped(missed, 'UNCLASSIFIED')}\n\n  ${noise.length ? `<div style=\"margin:26px 0 0;font:12px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#a0a0a0;border-top:1px solid #eee;padding-top:12px;\">\n    Ignored ${noise.length} as marketing or newsletters${(() => {\n      const t = [...new Set(noise.map((r) => r.topic))];\n      return t.length ? ' — mostly ' + t.slice(0, 3).join(', ').toLowerCase() : '';\n    })()}.\n  </div>` : ''}\n\n  <div style=\"margin-top:14px;font:11px -apple-system,Segoe UI,Roboto,sans-serif;color:#c0c0c0;\">\n    Summarised locally by ${\"qwen2.5:7b\"}. Nothing left this machine.\n  </div>\n</div>`;\n\n// Plain-text fallback for clients that refuse HTML.\nconst text = [\n  `${rows.length} emails in the last ${6} hours.`,\n  '',\n  ...(action.length ? ['NEEDS YOU:', ...action.map((r) => `  • ${r.from} — ${r.subject}${r.buried ? ` [was in ${r.buried}]` : ''}`), ''] : []),\n  ...(fyi.length ? ['WORTH KNOWING:', ...fyi.map((r) => `  • ${r.from} — ${r.subject}${r.buried ? ` [was in ${r.buried}]` : ''}`), ''] : []),\n  `Ignored ${noise.length} as marketing or newsletters.`,\n].join('\\n');\n\nreturn [{\n  json: {\n    html,\n    text,\n    action: action.length,\n    fyi: fyi.length,\n    noise: noise.length,\n    unsorted: missed.length,\n    rescued: rescued.length,\n    total: rows.length,\n  },\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "id": "360eeaca-d4bf-ef8c-229d-5ff4866418b8",
+      "name": "Assemble the digest"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "vamsy.24@gmail.com",
+        "subject": "=Inbox digest — {{ $json.action }} need you, {{ $json.fyi }} to know ({{ $now.setZone('America/New_York').toFormat('d LLL HH:mm') }})",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        0
+      ],
+      "id": "59f1bb8a-4e3e-88fa-60d6-34600859ea96",
+      "name": "Email me the digest",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "jerry-gmail",
+          "name": "Jerry — Gmail"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 hours": {
+      "main": [
+        [
+          {
+            "node": "Get recent mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get recent mail": {
+      "main": [
+        [
+          {
+            "node": "Format for the model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format for the model": {
+      "main": [
+        [
+          {
+            "node": "Anything to report?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to report?": {
+      "main": [
+        [
+          {
+            "node": "Write the digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write the digest": {
+      "main": [
+        [
+          {
+            "node": "Assemble the digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble the digest": {
+      "main": [
+        [
+          {
+            "node": "Email me the digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summariser": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write the digest",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "jerry-local"
+  },
+  "tags": [],
+  "versionId": "c4c28028-4fad-a1fb-fa4d-d604acc099a5"
+}

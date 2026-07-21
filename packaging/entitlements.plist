@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Notarisation requires the hardened runtime, and the hardened runtime
+      breaks CPython unless these three are granted. They are the standard set
+      for a PyInstaller bundle, not a shortcut:
+
+      allow-jit / allow-unsigned-executable-memory
+        CPython allocates and executes memory the hardened runtime would
+        otherwise refuse.
+      disable-library-validation
+        PyInstaller loads .so extension modules that carry our signature rather
+        than Apple's team identifier; without this they are rejected at import.
+    -->
+    <key>com.apple.security.cs.allow-jit</key><true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+    <key>com.apple.security.cs.disable-library-validation</key><true/>
+
+    <!-- Jerry talks to Gmail and to the local model server. -->
+    <key>com.apple.security.network.client</key><true/>
+    <key>com.apple.security.network.server</key><true/>
+</dict>
+</plist>

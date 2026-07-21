@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "What matters to YOU. A general-purpose model cannot infer any of this, and",
+    "getting it wrong is the difference between a digest you read and one you",
+    "ignore. Edit this file and re-run ./scripts/setup.sh — nothing else needs",
+    "to change.",
+    "",
+    "about_me      free text, injected into the model's prompt as context.",
+    "always_important  regex; anything matching is forced to NEEDS YOU.",
+    "never_important   regex; anything matching is forced to IGNORED, and this",
+    "                  wins over the model AND over the money/receipt guards.",
+    "",
+    "The two regex lists are enforced in code, not left to the model's",
+    "judgement, because a 7B model forgets a preference stated once in a long",
+    "prompt roughly as often as it remembers it."
+  ],
+
+  "about_me": [
+    "I am NOT looking for a job. I am not job hunting, not open to offers, and not interested in roles, contracts or recruiter outreach. Any email about a job opening, a role, a vacancy, a contract position, or from a recruiter or job board is the LOWEST possible priority to me, no matter how urgent or personally addressed it looks.",
+    "I book cinema tickets through Regal as a side business, so Regal booking confirmations are important to me. Regal marketing and promotions are not.",
+    "I care about anything touching my own money or accounts: payments, transfers, statements, credit score changes, and security or sign-in alerts."
+  ],
+
+  "always_important": "regal tickets for",
+
+  "never_important": "hiring|recruit|job alert|vacanc|\\brole\\b|\\broles\\b|\\bw2\\b|c2c|corp to corp|full[- ]time|contract position|opening|resume|candidate|job opportunit|\\b(?:data|cloud|software|azure|aws|gcp|devops|ml|ai|backend|frontend|full[- ]?stack|senior|junior|lead|principal)\\s+(?:engineer|developer|architect|analyst|scientist)\\b|\\b(?:engineer|developer|architect)\\s+(?:with|at|@)\\b|indeed|monster|lensa|dice|ziprecruiter|glassdoor"
+}
